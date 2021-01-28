@@ -1,6 +1,7 @@
-#!/usr/bin/env bash
-set -eu
+#!/bin/sh
+PS4='> '
+set -eux
 
-export CGO_ENABLED=0 GOARCH=amd64 GOOS=linux "$@"
-go build -o "./shell-$GOOS-$GOARCH" -ldflags "-extldflags -static -s -w -X main.Shell=${shell@Q} -X main.Destination=${destination@Q}" ./shell.go
-
+cd "$(dirname "$0")"
+export CGO_ENABLED=0 "$@"
+exec go build -o ./shell.bin -ldflags "-extldflags -static -s -w -X main.Target=${TARGET:?undefined variable}" ./shell.go
